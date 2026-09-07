@@ -1,0 +1,20 @@
+# Flutter/Dart build & tooling artifacts — standard flutter create ignores
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+.idea/
+
+# Platform folders are generated locally via `flutter create .`
+# (see README) rather than committed by Person B, so they always match
+# whoever's Flutter SDK version is building the project.
+/android/
+/ios/
+/web/
+/linux/
+/macos/
+/windows/
+
+.DS_Store

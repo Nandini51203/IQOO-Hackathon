@@ -1,0 +1,28 @@
+name: rakshasense_person_b
+description: "RakshaSense — Person B module (Check-in UI & Situation Card) for the iQOO Hackathon 2026 prototype."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Keeps the check-in screen's display on while the countdown is running.
+  # There is no pure-Dart/Flutter API for this — it requires native
+  # platform code, which this plugin already provides, so Person B does
+  # not need to write any native Android code for it.
+  wakelock_plus: ^1.2.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  # Standard lint rules shipped with every `flutter create` project.
+  # Dev-only — does not affect the app at runtime or add any feature.
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
