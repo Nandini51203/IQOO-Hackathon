@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../config/checkin_config.dart';
+import '../escalation/escalation_manager.dart';
 import '../models/situation_data.dart';
 import 'check_in_screen.dart';
 
@@ -25,14 +26,15 @@ class HomeScreen extends StatelessWidget {
             triggerType: 'Manual simulate (dev)',
           ),
           onTimeout: () {
-            // MOCKED — real build: EscalationManager.trigger(contact) here.
-            // Waiting for Person C.
-            debugPrint('[Person B] onTimeout fired -> escalation would start now (MOCKED)');
+            // WIRED — Person C's module fetches location, tries SMS,
+            // and shows AlertSentScreen with the real/fallback status.
+            EscalationManager.trigger(context);
           },
           onConfirmSafe: () {
             // MOCKED — real build: resume Person A's monitoring here.
             // Waiting for Person A.
-            debugPrint('[Person B] onConfirmSafe fired -> user marked safe (MOCKED)');
+            debugPrint(
+                '[Person B] onConfirmSafe fired -> user marked safe (MOCKED)');
           },
         ),
       ),
@@ -49,7 +51,8 @@ class HomeScreen extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.shield_outlined, size: 48, color: Colors.black38),
+              const Icon(Icons.shield_outlined,
+                  size: 48, color: Colors.black38),
               const SizedBox(height: 16),
               const Text(
                 "Monitoring normally...\n"
@@ -66,8 +69,10 @@ class HomeScreen extends StatelessWidget {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFFB00020),
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
                 ),
               ),
             ],
