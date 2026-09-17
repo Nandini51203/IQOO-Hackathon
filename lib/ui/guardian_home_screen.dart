@@ -1,21 +1,36 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 
+import '../config/checkin_config.dart';
+import '../escalation/escalation_manager.dart';
+import '../models/situation_data.dart';
+import '../screens/check_in_screen.dart';
 import '../sensors/fall_detection_state.dart';
 import '../sensors/fall_detector.dart';
 import '../sensors/sensor_debug_screen.dart';
+import '../services/native_sms_service.dart';
 import '../shared/trigger_listener.dart';
-import 'fall_alert_screen.dart';
 import 'motion_wave_painter.dart';
 import 'pulse_ring.dart';
 
-/// The real, user-facing screen — what actually ships, instead of a
-/// SIMULATE FALL debug button. It runs the genuine accelerometer/
-/// gyroscope pipeline and reacts to a real `onFallDetected` callback by
-/// opening [FallAlertScreen]. A raw-data diagnostics view is still
-/// reachable (for tuning thresholds on the demo phone, Section 8/16 of
-/// the build plan) but is no longer the primary interface.
+/// Main user-facing RakshaSense screen.
+///
+/// Integration flow:
+///
+/// FallDetector
+///      ↓
+/// CONFIRMED_FALL
+///      ↓
+/// CheckInScreen
+///      ↓
+/// ┌─────────────┬──────────────┐
+/// │ I'M OKAY    │ TIMEOUT      │
+/// │             │              │
+/// │ Resume      │ Escalation   │
+/// │ monitoring │ Manager      │
+/// └─────────────┴──────────────┘
 class GuardianHomeScreen extends StatefulWidget {
   const GuardianHomeScreen({super.key});
 
@@ -30,13 +45,16 @@ class _GuardianHomeScreenState extends State<GuardianHomeScreen> {
   static const _muted = Color(0xFF8792A6);
 
   late final FallDetector _detector;
+
   Timer? _uiTicker;
+
   bool _monitoring = false;
-  bool _alertShowing = false;
+  bool _checkInShowing = false;
 
   @override
   void initState() {
     super.initState();
+
     _detector = FallDetector(
       listener: _HomeTriggerListener(
         onFall: _handleFallDetected,
@@ -52,33 +70,146 @@ class _GuardianHomeScreenState extends State<GuardianHomeScreen> {
     super.dispose();
   }
 
+  // ------------------------------------------------------------
+  // FALL DETECTED → CHECK-IN
+  // ------------------------------------------------------------
+
   void _handleFallDetected(double confidence) {
-    if (!mounted || _alertShowing) return;
-    _alertShowing = true;
+    if (!mounted || _checkInShowing) {
+      return;
+    }
+
+    _checkInShowing = true;
+
+    final confidencePercent = (confidence * 100).round();
+
     Navigator.of(context)
-        .push(MaterialPageRoute(
-          builder: (_) => FallAlertScreen(
-            confidence: confidence,
-            detectedAt: DateTime.now(),
-            onDismiss: () => Navigator.of(context).pop(),
+        .push(
+      MaterialPageRoute(
+        builder: (_) => CheckInScreen(
+          countdownSeconds: CheckInConfig.countdownSeconds,
+          situationData: SituationData(
+            situation: 'Possible fall detected',
+            confidence: '$confidencePercent%',
+            time: DateTime.now(),
+            triggerType: 'Automatic fall detection',
           ),
-        ))
-        .then((_) => _alertShowing = false);
+
+          // ------------------------------------------------
+          // USER DID NOT RESPOND
+          // ------------------------------------------------
+
+          onTimeout: () async {
+            EscalationManager.trigger(context);
+          },
+
+          // ------------------------------------------------
+          // USER CONFIRMED SAFE
+          // ------------------------------------------------
+
+          onConfirmSafe: () {
+            if (!_monitoring) {
+              _startMonitoring();
+            }
+          },
+        ),
+      ),
+    )
+        .then((_) {
+      _checkInShowing = false;
+    });
+  }
+
+  // ------------------------------------------------------------
+  // MONITORING
+  // ------------------------------------------------------------
+  Future<void> _startMonitoring() async {
+    if (_monitoring) return;
+
+    // Request SMS permission before monitoring starts.
+    // This is important because the user may be unconscious
+    // when an emergency escalation happens.
+    final smsPermission =
+    await NativeSmsService.requestPermission();
+
+    if (!mounted) return;
+
+    if (!smsPermission) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'SMS permission is required for automatic emergency alerts.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    // Request location permission before monitoring starts.
+    LocationPermission locationPermission =
+    await Geolocator.checkPermission();
+
+    if (locationPermission == LocationPermission.denied) {
+      locationPermission =
+      await Geolocator.requestPermission();
+    }
+
+    if (!mounted) return;
+
+    if (locationPermission == LocationPermission.denied ||
+        locationPermission == LocationPermission.deniedForever) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Location permission is required for emergency location sharing.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    // All required permissions are available.
+    setState(() {
+      _monitoring = true;
+    });
+
+    _detector.start();
+
+    _uiTicker?.cancel();
+
+    _uiTicker = Timer.periodic(
+      const Duration(milliseconds: 120),
+          (_) {
+        if (!mounted) return;
+
+        setState(() {});
+      },
+    );
+  }
+
+  void _stopMonitoring() {
+    if (!_monitoring) {
+      return;
+    }
+
+    setState(() {
+      _monitoring = false;
+    });
+
+    _detector.stop();
   }
 
   void _toggleMonitoring() {
-    setState(() {
-      _monitoring = !_monitoring;
-      if (_monitoring) {
-        _detector.start();
-        _uiTicker ??= Timer.periodic(const Duration(milliseconds: 150), (_) {
-          if (mounted) setState(() {});
-        });
-      } else {
-        _detector.stop();
-      }
-    });
+    if (_monitoring) {
+      _stopMonitoring();
+    } else {
+      _startMonitoring();
+    }
   }
+
+  // ------------------------------------------------------------
+  // STATUS
+  // ------------------------------------------------------------
 
   _StatusInfo get _status {
     if (!_monitoring) {
@@ -88,6 +219,7 @@ class _GuardianHomeScreenState extends State<GuardianHomeScreen> {
         intensity: 0.08,
       );
     }
+
     switch (_detector.state) {
       case FallDetectionState.normal:
         return const _StatusInfo(
@@ -95,36 +227,42 @@ class _GuardianHomeScreenState extends State<GuardianHomeScreen> {
           subtitle: 'Everything looks normal.',
           intensity: 0.15,
         );
+
       case FallDetectionState.freeFall:
         return const _StatusInfo(
           label: 'Noticed a sudden drop in motion',
           subtitle: 'Checking what happens next.',
           intensity: 0.45,
         );
+
       case FallDetectionState.impact:
         return const _StatusInfo(
           label: 'Checking a sharp impact',
           subtitle: 'Looking for a change in orientation.',
           intensity: 0.6,
         );
+
       case FallDetectionState.orientationChanged:
         return const _StatusInfo(
           label: 'Confirming what happened',
           subtitle: 'Waiting to see if you move again.',
           intensity: 0.75,
         );
+
       case FallDetectionState.stillness:
         return const _StatusInfo(
           label: 'Waiting to see if you move',
           subtitle: 'Almost done checking.',
           intensity: 0.9,
         );
+
       case FallDetectionState.confirmedFall:
         return const _StatusInfo(
           label: 'Fall detected',
-          subtitle: 'Opening the alert…',
+          subtitle: 'Opening safety check-in.',
           intensity: 1.0,
         );
+
       case FallDetectionState.debounce:
         return const _StatusInfo(
           label: 'Just checked in',
@@ -137,8 +275,9 @@ class _GuardianHomeScreenState extends State<GuardianHomeScreen> {
   @override
   Widget build(BuildContext context) {
     final status = _status;
+
     final magnitudes =
-        _detector.buffer.samples.map((s) => s.accMagnitude).toList();
+    _detector.buffer.samples.map((s) => s.accMagnitude).toList();
 
     return Scaffold(
       backgroundColor: _navy,
@@ -149,17 +288,27 @@ class _GuardianHomeScreenState extends State<GuardianHomeScreen> {
         title: const Text(
           'RakshaSense',
           style: TextStyle(
-              color: _paper, fontWeight: FontWeight.w600, fontSize: 20),
+            color: _paper,
+            fontWeight: FontWeight.w600,
+            fontSize: 20,
+          ),
         ),
         actions: [
           IconButton(
-            tooltip: 'Diagnostics (for tuning on this device)',
-            icon: const Icon(Icons.tune_rounded, color: _muted),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => SensorDebugScreen(detector: _detector),
-              ),
+            tooltip: 'Diagnostics',
+            icon: const Icon(
+              Icons.tune_rounded,
+              color: _muted,
             ),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => SensorDebugScreen(
+                    detector: _detector,
+                  ),
+                ),
+              );
+            },
           ),
         ],
       ),
@@ -169,8 +318,14 @@ class _GuardianHomeScreenState extends State<GuardianHomeScreen> {
           child: Column(
             children: [
               const Spacer(flex: 3),
-              PulseRing(color: _amber, intensity: status.intensity),
+
+              PulseRing(
+                color: _amber,
+                intensity: status.intensity,
+              ),
+
               const SizedBox(height: 36),
+
               Text(
                 status.label,
                 textAlign: TextAlign.center,
@@ -180,43 +335,62 @@ class _GuardianHomeScreenState extends State<GuardianHomeScreen> {
                   fontWeight: FontWeight.w600,
                 ),
               ),
+
               const SizedBox(height: 8),
+
               Text(
                 status.subtitle,
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: _muted, fontSize: 14),
+                style: const TextStyle(
+                  color: _muted,
+                  fontSize: 14,
+                ),
               ),
+
               const Spacer(flex: 2),
+
               SizedBox(
                 height: 56,
                 width: double.infinity,
                 child: CustomPaint(
                   painter: MotionWavePainter(
                     magnitudes: magnitudes,
-                    color: _amber.withOpacity(_monitoring ? 0.8 : 0.25),
+                    color: _amber.withOpacity(
+                      _monitoring ? 0.8 : 0.25,
+                    ),
                   ),
                 ),
               ),
+
               const SizedBox(height: 28),
+
               SizedBox(
                 width: double.infinity,
                 child: FilledButton(
                   onPressed: _toggleMonitoring,
                   style: FilledButton.styleFrom(
-                    backgroundColor: _monitoring ? _paper : _amber,
+                    backgroundColor:
+                    _monitoring ? _paper : _amber,
                     foregroundColor: _navy,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 16,
+                    ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14),
                     ),
                   ),
                   child: Text(
-                    _monitoring ? 'Pause monitoring' : 'Start monitoring',
+                    _monitoring
+                        ? 'Pause monitoring'
+                        : 'Start monitoring',
                     style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w600),
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ),
+
               const SizedBox(height: 28),
             ],
           ),
@@ -238,19 +412,23 @@ class _StatusInfo {
   });
 }
 
-/// Bridges the frozen [TriggerListener] contract to simple callbacks so
-/// this screen can react to a *real* detection without touching
-/// `lib/shared/` (build plan, Section 12: don't change shared/ unless
-/// the team agrees).
+/// Bridges the Member 1 sensor contract to the main UI.
 class _HomeTriggerListener implements TriggerListener {
   final void Function(double confidence) onFall;
   final VoidCallback onGesture;
 
-  _HomeTriggerListener({required this.onFall, required this.onGesture});
+  _HomeTriggerListener({
+    required this.onFall,
+    required this.onGesture,
+  });
 
   @override
-  void onFallDetected(double confidence) => onFall(confidence);
+  void onFallDetected(double confidence) {
+    onFall(confidence);
+  }
 
   @override
-  void onGestureTriggered() => onGesture();
+  void onGestureTriggered() {
+    onGesture();
+  }
 }

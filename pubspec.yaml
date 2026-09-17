@@ -1,11 +1,7 @@
-name: rakshasense_sensor_module
-description: >
-  RakshaSense – Sensor & Trigger Engine (Member 1).
-  Standalone Flutter prototype: accelerometer/gyroscope input ->
-  rolling buffer -> fall-detection state machine -> confidence score ->
-  onFallDetected callback.
+name: rakshasense
+description: RakshaSense - Phone-based safety and emergency response system.
 publish_to: 'none'
-version: 0.1.0
+version: 1.0.0+1
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -13,12 +9,17 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  # Maintained cross-platform accelerometer/gyroscope streams.
-  # If `flutter pub get` resolves a newer major version, check the
-  # sensors_plus changelog — the stream API (accelerometerEventStream /
-  # gyroscopeEventStream) has been stable since 4.x.
-  sensors_plus: ^6.0.1
+
   cupertino_icons: ^1.0.8
+
+  # Member 1 - Sensor & Fall Detection
+  sensors_plus: ^6.0.1
+
+  # Member 2 - Check-in UI
+  wakelock_plus: ^1.2.8
+
+  # Member 3 - Location & SMS Escalation
+  geolocator: ^13.0.1
 
 dev_dependencies:
   flutter_test:
