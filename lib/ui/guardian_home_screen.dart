@@ -10,6 +10,7 @@ import '../screens/check_in_screen.dart';
 import '../sensors/fall_detection_state.dart';
 import '../sensors/fall_detector.dart';
 import '../sensors/sensor_debug_screen.dart';
+import '../services/background_monitor_service.dart';
 import '../services/native_sms_service.dart';
 import '../shared/trigger_listener.dart';
 import 'motion_wave_painter.dart';
@@ -130,7 +131,7 @@ class _GuardianHomeScreenState extends State<GuardianHomeScreen> {
     // This is important because the user may be unconscious
     // when an emergency escalation happens.
     final smsPermission =
-    await NativeSmsService.requestPermission();
+        await NativeSmsService.requestPermission();
 
     if (!mounted) return;
 
@@ -147,11 +148,11 @@ class _GuardianHomeScreenState extends State<GuardianHomeScreen> {
 
     // Request location permission before monitoring starts.
     LocationPermission locationPermission =
-    await Geolocator.checkPermission();
+        await Geolocator.checkPermission();
 
     if (locationPermission == LocationPermission.denied) {
       locationPermission =
-      await Geolocator.requestPermission();
+          await Geolocator.requestPermission();
     }
 
     if (!mounted) return;
@@ -168,7 +169,26 @@ class _GuardianHomeScreenState extends State<GuardianHomeScreen> {
       return;
     }
 
-    // All required permissions are available.
+    // Start Android foreground execution BEFORE starting
+    // the sensor detector so monitoring can continue when
+    // RakshaSense is moved to the background.
+    final backgroundStarted =
+        await BackgroundMonitorService.start();
+
+    if (!mounted) return;
+
+    if (!backgroundStarted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Background protection could not be started.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    // All required permissions and background execution are available.
     setState(() {
       _monitoring = true;
     });
@@ -179,7 +199,7 @@ class _GuardianHomeScreenState extends State<GuardianHomeScreen> {
 
     _uiTicker = Timer.periodic(
       const Duration(milliseconds: 120),
-          (_) {
+      (_) {
         if (!mounted) return;
 
         setState(() {});
@@ -187,7 +207,7 @@ class _GuardianHomeScreenState extends State<GuardianHomeScreen> {
     );
   }
 
-  void _stopMonitoring() {
+  Future<void> _stopMonitoring() async {
     if (!_monitoring) {
       return;
     }
@@ -197,6 +217,9 @@ class _GuardianHomeScreenState extends State<GuardianHomeScreen> {
     });
 
     _detector.stop();
+    _uiTicker?.cancel();
+
+    await BackgroundMonitorService.stop();
   }
 
   void _toggleMonitoring() {
